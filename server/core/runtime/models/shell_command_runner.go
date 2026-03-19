@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -32,12 +33,14 @@ type Line struct {
 // ShellCommandRunner runs a command via `exec.Command` and streams output to the
 // `ProjectCommandOutputHandler`.
 type ShellCommandRunner struct {
-	command       string
-	workingDir    string
-	outputHandler jobs.ProjectCommandOutputHandler
-	streamOutput  bool
-	cmd           *exec.Cmd
-	shell         *valid.CommandShell
+	command          string
+	workingDir       string
+	outputHandler    jobs.ProjectCommandOutputHandler
+	streamOutput     bool
+	cmd              *exec.Cmd
+	shell            *valid.CommandShell
+	processRegistrar ProcessRegistrar
+	prKey            string
 }
 
 func NewShellCommandRunner(
@@ -69,6 +72,14 @@ func NewShellCommandRunner(
 		cmd:           cmd,
 		shell:         shell,
 	}
+}
+
+// SetProcessRegistrar sets the process registrar and PR key for tracking
+// running processes. If set, the runner will register/deregister its process
+// so it can be killed when a newer autoplan supersedes this one.
+func (s *ShellCommandRunner) SetProcessRegistrar(registrar ProcessRegistrar, prKey string) {
+	s.processRegistrar = registrar
+	s.prKey = prKey
 }
 
 func (s *ShellCommandRunner) Run(ctx command.ProjectContext) (string, error) {
@@ -122,6 +133,9 @@ func (s *ShellCommandRunner) RunCommandAsync(ctx command.ProjectContext) (chan<-
 			outCh <- Line{Err: err}
 			return
 		}
+
+		s.registerProcess(s.cmd.Process)
+		defer s.deregisterProcess(s.cmd.Process)
 
 		// If we get anything on inCh, write it to stdin.
 		// This function will exit when inCh is closed which we do in our defer.
@@ -187,4 +201,16 @@ func (s *ShellCommandRunner) RunCommandAsync(ctx command.ProjectContext) (chan<-
 	}()
 
 	return inCh, outCh
+}
+
+func (s *ShellCommandRunner) registerProcess(proc *os.Process) {
+	if s.processRegistrar != nil && proc != nil {
+		s.processRegistrar.Register(s.prKey, proc)
+	}
+}
+
+func (s *ShellCommandRunner) deregisterProcess(proc *os.Process) {
+	if s.processRegistrar != nil && proc != nil {
+		s.processRegistrar.Deregister(s.prKey, proc)
+	}
 }

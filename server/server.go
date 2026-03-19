@@ -477,6 +477,11 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	if err != nil && flag.Lookup("test.v") == nil {
 		return nil, fmt.Errorf("initializing %s: %w", userConfig.DefaultTFDistribution, err)
 	}
+
+	processTracker := events.NewProcessTracker(logger)
+	if terraformClient != nil {
+		terraformClient.SetProcessRegistrar(processTracker)
+	}
 	markdownRenderer := events.NewMarkdownRenderer(
 		gitlabClient.SupportsCommonMark(),
 		userConfig.DisableApplyAll,
@@ -924,6 +929,13 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 		VarFileAllowlistChecker:        varFileAllowlistChecker,
 		CommitStatusUpdater:            commitStatusUpdater,
 	}
+	autoplanSerializer := events.NewAutoplanSerializer(
+		commandRunner,
+		cancellationTracker,
+		processTracker,
+		logger,
+	)
+
 	repoAllowlist, err := events.NewRepoAllowlistChecker(userConfig.RepoAllowlist)
 	if err != nil {
 		return nil, err
@@ -982,7 +994,7 @@ func NewServer(userConfig UserConfig, config Config) (*Server, error) {
 	}
 
 	eventsController := &events_controllers.VCSEventsController{
-		CommandRunner:                   commandRunner,
+		CommandRunner:                   autoplanSerializer,
 		PullCleaner:                     pullClosedExecutor,
 		Parser:                          eventParser,
 		CommentParser:                   commentParser,

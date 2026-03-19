@@ -85,6 +85,8 @@ type DefaultClient struct {
 	usePluginCache bool
 
 	projectCmdOutputHandler jobs.ProjectCommandOutputHandler
+
+	processRegistrar models.ProcessRegistrar
 }
 
 // versionRegex extracts the version from `terraform version` output.
@@ -264,6 +266,12 @@ func (c *DefaultClient) DefaultDistribution() terraform.Distribution {
 // is defined.
 func (c *DefaultClient) DefaultVersion() *version.Version {
 	return c.defaultVersion
+}
+
+// SetProcessRegistrar sets the process registrar used to track running
+// terraform processes so they can be killed on autoplan cancellation.
+func (c *DefaultClient) SetProcessRegistrar(registrar models.ProcessRegistrar) {
+	c.processRegistrar = registrar
 }
 
 // TerraformBinDir returns the directory where we download Terraform binaries.
@@ -472,6 +480,10 @@ func (c *DefaultClient) RunCommandAsync(ctx command.ProjectContext, path string,
 	}
 
 	runner := models.NewShellCommandRunner(nil, cmd, envVars, path, true, c.projectCmdOutputHandler)
+	if c.processRegistrar != nil {
+		prKey := fmt.Sprintf("%s#%d", ctx.Pull.BaseRepo.FullName, ctx.Pull.Num)
+		runner.SetProcessRegistrar(c.processRegistrar, prKey)
+	}
 	inCh, outCh := runner.RunCommandAsync(ctx)
 	return inCh, outCh
 }
